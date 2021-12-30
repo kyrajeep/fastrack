@@ -145,7 +145,8 @@ extraArgs.keepLast = 1;
 
 extraArgs.quiet = 0;
 
-% solve backwards reachable set
+% solve backwards reachable set 
+% for the subsystem with dimension subDims. iterates through the dimension for the TEB
 datas = cell(1,length(subDims));
 for ii = 1:length(subDims)
     [datas{ii}, ~] = HJIPDE_solve(data0{ii}, tau, ...
