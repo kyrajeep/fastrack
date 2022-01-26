@@ -1,100 +1,124 @@
+# Generic .travis.yml file for running continuous integration on Travis-CI for
+# any ROS package.
+#
+# Available here:
+#   - https://github.com/felixduvallet/ros-travis-integration
+#
+# This installs ROS on a clean Travis-CI virtual machine, creates a ROS
+# workspace, resolves all listed dependencies, and sets environment variables
+# (setup.bash). Then, it compiles the entire ROS workspace (ensuring there are
+# no compilation errors), and runs all the tests. If any of the compilation/test
+# phases fail, the build is marked as a failure.
+#
+# We handle two types of package dependencies specified in the package manifest:
+#   - system dependencies that can be installed using `rosdep`, including other
+#     ROS packages and system libraries. These dependencies must be known to
+#     `rosdistro` and are installed using apt-get.
+#   - package dependencies that must be checked out from source. These are handled by
+#     `wstool`, and should be listed in a file named dependencies.rosinstall.
+#
+
+# There are envioronment variables you may want to change, such as ROS_DISTRO,
+# ROSINSTALL_FILE, and the CATKIN_OPTIONS file.  See the README.md for more
+# information on these flags, and
+# https://docs.travis-ci.com/user/environment-variables/ for information about
+# Travis environment variables in general.
+#
+# Author: Felix Duvallet <felixd@gmail.com>
+
+# NOTE: The build lifecycle on Travis.ci is something like this:
+#    before_install
+#    install
+#    before_script
+#    script
+#    after_success or after_failure
+#    after_script
+#    OPTIONAL before_deploy
+#    OPTIONAL deploy
+#    OPTIONAL after_deploy
+
+################################################################################
+
+sudo: required
+cache:
+  - apt
+
+# Build all valid Ubuntu/ROS combinations available on Travis VMs.
+language: generic
+matrix:
+  include:
+  - name: "Trusty indigo"
+    dist: trusty
+    env: ROS_DISTRO=indigo
+  - name: "Xenial kinetic"
+    dist: xenial
+    env: ROS_DISTRO=kinetic
+
+# Configuration variables. All variables are global now, but this can be used to
+# trigger a build matrix for different ROS distributions if desired.
 env:
   global:
-    - ROS_DISTRO=melodic
-    - ROS_CI_DESKTOP="`lsb_release -cs`"  # e.g. [precise|trusty|...]
+    - ROS_CI_DESKTOP="`lsb_release -cs`"  # e.g. [trusty|xenial|...]
     - CI_SOURCE_PATH=$(pwd)
     - ROSINSTALL_FILE=$CI_SOURCE_PATH/dependencies.rosinstall
     - CATKIN_OPTIONS=$CI_SOURCE_PATH/catkin.options
-    - ROS_PARALLEL_JOBS='-j4 -l4'
+    - ROS_PARALLEL_JOBS='-j8 -l6'
+    # Set the python path manually to include /usr/-/python2.7/dist-packages
+    # as this is where apt-get installs python packages.
     - PYTHONPATH=$PYTHONPATH:/usr/lib/python2.7/dist-packages:/usr/local/lib/python2.7/dist-packages
-    - secure: "QfI2ypxv8wpVzZsp7Eqq3CGcMBVM8JLaJus27dT8h4FGtvgRCC3InZ5JGEiweL5bkYyYJCFMHkxMJj4AAZQRubO6GH9bXetPJxUff4rqItfxSGqklKTAAG1J7wwUloI7lI+8gow3seYriiIS/eqrZ7nEZ1bFWYwqdUB/Xl0YjRE7uvTp0D3LVBVWj0XTjmG7MXLLMrjFZvmDABMtB2w4z+KFc01UBz/qnmbpdKaDax15JHAXwHx9zZSyTqJMjsVS1NQQpgVnnFZSx9gGo9bzKj0ewRyos2nGg45cFXMgS1Vnmrr4sOi0Jg83jyCNnzZB+J0EJ4P5x3FllNpCBPrRQC0SB7KvP7f5p2yXf2eU04Pe0mT0/sneIUdRaWiuLIB9S1ah5eZYJNTJ+KSH1Qna1ZY54FsWbehsUUG5YyPdRm0woqwihpFvEDObaTpubYUvyecEHsJJrFsLCR2H8Qyw0C5tTVC3xDrmeeE+d7Ofz+NBL5qNPxzoZsn9z3jVTPzf7z9QxD3Rttm5u/W6HEj4azqSZqcrGrTeaEYDFYPCY8JZJrSQ+mYmwCVbySrASmxpn5JQ+1s2Slp5z56CcMFfA9fLUWr6sCk+p3rNCBi0/GkW2WeegfZd9lha7y6Y4J4Vq+bBlA+sK7ZkOQDsbbNEHEjiF/NL/R5Ma05zeZCD2vU="
 
-language: cpp
+################################################################################
 
-compiler:
-  - gcc
-  #- clang
-
-os:
-  - linux
-
-dist:
-  - bionic
-
-branches:
-  only:
-    - master
-
-notifications:
-  email: false
-
+# Install system dependencies, namely a very barebones ROS setup.
 before_install:
   - sudo sh -c "echo \"deb http://packages.ros.org/ros/ubuntu $ROS_CI_DESKTOP main\" > /etc/apt/sources.list.d/ros-latest.list"
-  - sudo apt-key adv --keyserver hkp\://ha.pool.sks-keyservers.net\ --recv-key\ 421C365BD9FF1F717815A3895523BAEEB01FA116 
-  - sudo apt-get update
+  - sudo apt-key adv --keyserver 'hkp://keyserver.ubuntu.com:80' --recv-key C1CF6E31E6BADE8868B172B4F42ED6FBAB17C654
+  - sudo apt-get update -qq
   - sudo apt-get install dpkg
-  - sudo apt-get install ros-$ROS_DISTRO-ros-base -y --allow-unauthenticated
-  - sudo rosdep init
-  - rosdep update
-  - sudo apt-get install ros-$ROS_DISTRO-tf -y --allow-unauthenticated
+  - sudo apt-get install -y python-catkin-pkg python-rosdep python-wstool ros-$ROS_DISTRO-ros-base
   - source /opt/ros/$ROS_DISTRO/setup.bash
+  # Prepare rosdep to install dependencies.
+  - sudo rosdep init
+  - rosdep update --include-eol-distros  # Support EOL distros.
 
+# Create a catkin workspace with the package under integration.
 install:
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then sudo apt-get install --yes build-essential doxygen graphviz libgflags-dev libgoogle-glog-dev mercurial cmake libatlas-base-dev libmatio-dev libflann-dev libusb-1.0-0 libusb-1.0-0-dev; fi
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then sudo pip install kitchen; fi
+  - mkdir -p ~/catkin_ws/src
+  - cd ~/catkin_ws/src
+  - catkin_init_workspace
+  # Create the devel/setup.bash (run catkin_make with an empty workspace) and
+  # source it to set the path variables.
+  - cd ~/catkin_ws
+  - catkin_make
+  - source devel/setup.bash
+  # Add the package under integration to the workspace using a symlink.
+  - cd ~/catkin_ws/src
+  - ln -s $CI_SOURCE_PATH .
 
-#before_script:
-  # Get Eigen. The apt-get version on 12.04 is too old; we need at least 3.1.0.
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then mkdir eigen && cd eigen; fi
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then hg clone https://bitbucket.org/eigen/eigen; fi
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then cd eigen && hg update 3.2; fi
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then mkdir build && cd build; fi
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then cmake -DCMAKE_BUILD_TYPE=Release ..; fi
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then make -j4; fi
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then sudo make install; fi
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then cd ../../..; fi
+# Install all dependencies, using wstool first and rosdep second.
+# wstool looks for a ROSINSTALL_FILE defined in the environment variables.
+before_script:
+  # source dependencies: install using wstool.
+  - cd ~/catkin_ws/src
+  - wstool init
+  - if [[ -f $ROSINSTALL_FILE ]] ; then wstool merge $ROSINSTALL_FILE ; fi
+  - wstool up
+  # package depdencies: install using rosdep.
+  - cd ~/catkin_ws
+  - rosdep install -y --from-paths src --ignore-src --rosdistro $ROS_DISTRO
 
-  # Get OMPL v1.2.1 (before they switched to gcc5 dependency).
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then mkdir ompl && cd ompl; fi
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then git clone https://github.com/ompl/ompl; fi
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then cd ompl && git checkout tags/1.2.1; fi
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then mkdir build && cd build; fi
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then cmake -DCMAKE_BUILD_TYPE=Release ..; fi
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then make -j4; fi
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then sudo make install; fi
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then cd ../../..; fi
-
-  # Get rosdoc_lite for auto-generating documentation.
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then mkdir rosdoc_lite && cd rosdoc_lite; fi
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then git clone https://github.com/ros-infrastructure/rosdoc_lite; fi
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then cd rosdoc_lite; fi
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then sudo python setup.py install; fi
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then cd ../..; fi
-
-  # Get crazyflie_clean, since fastrack_crazyflie_demos depends on it.
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then mkdir crazyflie_clean && cd crazyflie_clean; fi
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then git clone https://github.com/HJReachability/crazyflie_clean; fi
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then cd crazyflie_clean/ros; fi
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then catkin_make -j4 && source ./devel/setup.bash; fi
-  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then cd ../../..; fi
-
+# Compile and test (mark the build as failed if any step fails). If the
+# CATKIN_OPTIONS file exists, use it as an argument to catkin_make, for example
+# to blacklist certain packages.
+#
+# NOTE on testing: `catkin_make run_tests` will show the output of the tests
+# (gtest, nosetest, etc..) but always returns 0 (success) even if a test
+# fails. Running `catkin_test_results` aggregates all the results and returns
+# non-zero when a test fails (which notifies Travis the build failed).
 script:
-  - cd ros
-  - catkin_make -j4
-  - catkin_make run_tests
-
-after_success:
-  - cd ..
-  - git checkout master
-  - rm -rf doc
-  - rosdoc_lite ros/src/fastrack
-  - rm -rf eigen && rm -rf ompl && rm -rf crazyflie_clean && sudo rm -rf rosdoc_lite
-
-deploy:
-  verbose: true
-  provider: pages
-  skip-cleanup: true
-  github-token: $PA_TOKEN
-  keep-history: true
-  on:
-    branch: master
+  - source /opt/ros/$ROS_DISTRO/setup.bash
+  - cd ~/catkin_ws
+  - catkin_make $( [ -f $CATKIN_OPTIONS ] && cat $CATKIN_OPTIONS )
+  # Run the tests, ensuring the path is set correctly.
+  - source devel/setup.bash
+  - catkin_make run_tests && catkin_test_results
