@@ -94,7 +94,7 @@ after_success:
 deploy:
   verbose: true
   provider: pages
-  skip-cleanup: true
+  cleanup: true
   github-token: $PA_TOKEN
   keep-history: true
   on:
