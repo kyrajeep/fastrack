@@ -12,8 +12,8 @@ env:
 language: cpp
 
 compiler:
-  - gcc 4.8.0
-  #- clang
+  - gcc 
+  - clang
 
 os:
   - linux
