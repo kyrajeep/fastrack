@@ -12,7 +12,7 @@ env:
 language: cpp
 
 compiler:
-  - gcc10
+  - gcc 4.8.0
   #- clang
 
 os:
